@@ -1,12 +1,4 @@
-# Homework 2: MSDNS, a DNS resolver
-
-## Due ~~Monday, Feb 7~~ Wednesday, Feb 9
-
-In this assignment we'll use Java to write a caching DNS resolver.
-
-Your program will listen for incoming DNS requests.  When it receives one, it will check its local cache (a hash table) and, if it has a valid response in its cache for the query, wil send a result back right away.  Otherwise, it will do what we all do, and ask google (forward the request to Google's public DNS server at 8.8.8.8), store Google's response in the local cache, then send back the response.
-
-DNS is a somewhat large and complex protocol, but your program only has to support basic lookup queries and can basically punt on/ignore anything beyond the basics.
+# MSDNS, a DNS resolver
 
 ## DNS Message specification
 
