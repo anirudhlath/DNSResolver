@@ -1,1 +1,112 @@
-DNSResolver
+# Homework 2: MSDNS, a DNS resolver
+
+## Due ~~Monday, Feb 7~~ Wednesday, Feb 9
+
+In this assignment we'll use Java to write a caching DNS resolver.
+
+Your program will listen for incoming DNS requests.  When it receives one, it will check its local cache (a hash table) and, if it has a valid response in its cache for the query, wil send a result back right away.  Otherwise, it will do what we all do, and ask google (forward the request to Google's public DNS server at 8.8.8.8), store Google's response in the local cache, then send back the response.
+
+DNS is a somewhat large and complex protocol, but your program only has to support basic lookup queries and can basically punt on/ignore anything beyond the basics.
+
+## DNS Message specification
+
+The DNS protocol specificiaion is slightly fragmented because it has undergone a fair number of changes since its inception.  The first (I think?) official spec can be found [here](https://www.ietf.org/rfc/rfc1035.txt).  This has almost everything you'll need to understand the various fields in the message protocol.
+
+There are 2 bits which were reserved and requrired to be 0 in the version linked above.  These are now used for the "Authentic Data" and "Checking Disabled" fields of the header.  [This specification](https://tools.ietf.org/html/rfc5395) describes where to find them in the header.  We'll just ignore them and copy them from request to response.
+
+The pictues of the message layout will probably be the most helpful part of those specifications.  They're a little bit confusing: the bytes are laid out in the order they're in in the packet (what you'd expect).  The bits are laid out with the MSB on the left (what you'd expect if you treated them as a binary number written out).
+
+So, assuming a 16 bit wide table, the layout is essentially:
+
+[byte 0 bit 7, byte 0 bit 6, byte 0, bit 5, ..., byte 0 bit 0, byte 1 bit 7, byte 1 bit 6, ..., byte 1 bit 0]
+
+The other tricky bit about the DNS format is the message compression.  Because hostnames are repreated in the message, after the first time they're needed, the message just contains the byte index in the message where the domain name can be found.  Section 4 of the first link has more info on how it works.
+
+## Testing
+
+To test your implementation, you can use the commandline tool `dig`.  Unlike with our web servers last fall, its slightly tricky to use a DNS server using a nonstandard port, so it will be tricky to test your resolver as a system-wide DNS resolver (I'll provide some instructions on how you could do so, if you're interested).
+
+The following command will send a DNS query for example.com to your server, which is listening on port 8053 (53, the standard DNS port is privileged, so we can't listen on it without running as root):
+`dig example.com @127.0.0.1 -p 8053`
+
+Use wireshark to help make sure that when you decode/send messages that your using the correct format!
+
+## Implementation
+
+I suggest that you implement yoru solution in Java.  Feel free to organize your program however you want, but I'll provide suggestions below.  If you plan to deviate wildly from these, check with me or a TA before you get started to make sure you've got a good plan.
+
+In the discussion below I'm using the "named constructor" idiom (basically a static method that returns a new object, rather than providing a public constructor).  I found the code to be a bit more self documenting.  Feel free to write normal constructors if you want.
+
+My implementation has 4 classes representing the 4 major parts of a DNS message.  The usage of the input/output streams below should help make your solution easier to work with, especially with respect to compression!  If some of the method parameters seem weird, it's probably because I had to get creative to support compression.  When you read a domain name, you might need to read arbitrary bytes from anywhere in the message, and when you write a domain name, you need to know if you've written it before so you can compress it (well, write a pointer to where you put it before).
+
+### DNSHeader
+
+This class should store all the data provided by the 12 byte DNS header.  See the spec for all the fields needed.
+
+This class should have the following public methods:
+
+* `static DNSHeader decodeHeader(InputStream)` --read the header from an input stream (we'll use a ByteArrayInputStream but we will only use the basic read methods of input stream to read 1 byte, or to fill in a  byte array, so we'll be generic).
+* `static DNSHeader buildResponseHeader(DNSMessage request, DNSMessage response)` -- This will create the header for the response.  It will copy some fields from the request
+* `void writeBytes(OutputStream)` --encode the header to bytes to be sent back to the client.  The OutputStream interface has methods to write a single byte or an array of bytes.
+* `String toString()` -- Return a human readable string version of a header object.  **A reasonable implementation can be autogenerated by your IDE.**
+
+You'll probably need a few getters, but you should NOT provide any setters.
+
+Since this is the first thing in a DNS request, you should be able to test that you can read/decode the header before starting on other classes.
+
+### DNSQuestion
+
+This class represents a client request.   It should have the following public methods:
+
+* `static DNSQuestion decodeQuestion(InputStream, DNSMessage)` -- read a question from the input stream.  Due to compression, you may have to ask the DNSMessage containing this question to read some of the fields.
+* `void writeBytes(ByteArrayOutputStream, HashMap<String,Integer> domainNameLocations)`.  Write the question bytes which will be sent to the client.  The hash map is used for us to compress the message, see the DNSMessage class below.
+* `toString(), equals(), and hashCode()` -- Let your IDE generate these.  They're needed to use a question as a HashMap key, and to get a human readable string.
+
+### DNSRecord
+
+Everything after the header and question parts of the DNS message are stored as records.  This should have all the fields listed in the spec as well as a Date object storing when this record was created by your program.  It should also have the following public methods:
+
+* `static DNSRecord decodeRecord(InputStream, DNSMessage)`
+* `writeBytes(ByteArrayOutputStream, HashMap<String, Integer>)`
+* `String toString()`
+* `boolean timestampValid()` -- return whether the creation date + the time to live is after the current time.  The Date and Calendar classes will be useful for this.
+
+
+### DNSMessage
+
+This corresponds to an entire DNS Message.  It should contain:
+
+* the DNS Header
+* an array of questions
+* an array of answers
+* an array of "authority records" which we'll ignore
+* an array of "additional records" which we'll almost ignore
+
+**You should also store the the byte array containing the complete message in this class.  You'll need it to handle the compression technique described above**
+
+It should have the following methods:
+
+* `static DNSMessage decodeMessage(byte[] bytes)`
+* `String[] readDomainName(InputStream)` --read the pieces of a domain name starting from the current position of the input stream
+* `String[] readDomainName(int firstByte)` --same, but used when there's compression and we need to find the domain from earlier in the message.  This method should make a ByteArrayInputStream that starts at the specified byte and call the other version of this method
+* `static DNSMessage buildResponse(DNSMessage request, DNSRecord[] answers)` --build a response based on the request and the answers you intend to send back.
+* `byte[] toBytes()` -- get the bytes to put in a packet and send back
+* `static void writeDomainName(ByteArrayOutputStream, HashMap<String,Integer> domainLocations, String[] domainPieces)` -- If this is the first time we've seen this domain name in the packet, write it using the DNS encoding (each segment of the domain prefixed with its length, 0 at the end), and add it to the hash map.  Otherwise, write a back pointer to where the domain has been seen previously.
+* `String octetsToString(String[] octets)` -- join the pieces of a domain name with dots ([ "utah", "edu"] -> "utah.edu" )
+* `String toString()`
+
+
+
+### DNSCache
+
+This class is the local cache.  It should basically just have a `HashMap<DNSQuestion, DNSRecord>` in it.  You can just store the first answer for any question in the cache (a response for google.com might return 10 IP addresses, just store the first one).  This class should have methods for querying and inserting records into the cache.  When you look up an entry, if it is too old (its TTL has expired), remove it and return "not found."
+
+### DNS Server
+
+This class should open up a UDP socket (DatagramSocket class in Java), and listen for requests.  When it gets one, it should look at all the questions in the request.  If there is a valid answer in cache, add that the response, otherwise create another UDP socket to forward the request Google (8.8.8.8) and then await their response.  Once you've dealt with all the questions, send the response back to the client.
+
+Note: dig sends an additional record in the "additionalRecord" fields with a type of 41. You're supposed to send this record back in the additional record part of your response as well.
+
+### Error handling
+
+Your program should be robust to basic queries from dig, including queries for nonexistant hosts.  
